@@ -1,0 +1,13 @@
+#!/bin/sh
+set -e
+
+# Create dedicated service user if missing
+if ! id -u udpecho >/dev/null 2>&1; then
+    adduser --system --home /var/lib/udpecho --no-create-home --group udpecho
+fi
+
+install -d -o udpecho -g udpecho /var/lib/udpecho
+
+#DEBHELPER#
+
+exit 0

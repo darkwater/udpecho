@@ -2,5 +2,20 @@
 name = "udpecho"
 version = "0.1.0"
 edition = "2024"
+description = "Simple UDP echo responder gated by a shared secret"
+license = "MIT"
+authors = ["darkwater <dark@dark.red>"]
+
+[package.metadata.deb]
+maintainer = "darkwater <dark@dark.red>"
+copyright = "2024, udpecho maintainers"
+extended-description = "A small UDP server that echoes back packets that exactly match a preloaded secret file."
+depends = "systemd"
+maintainer-scripts = "packaging"
+systemd-units = { enable = true, start = true, restart-after-upgrade = true }
+assets = [
+    ["target/release/udpecho", "/usr/bin/udpecho", "755"],
+    ["packaging/udpecho.default", "/etc/default/udpecho", "644"],
+]
 
 [dependencies]
