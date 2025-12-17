@@ -88,20 +88,31 @@ jobs:
 
       - name: Test UDP echo service
         run: |
+          # Install netcat if not available
+          sudo apt-get install -y netcat-openbsd
+          
           # Send the correct secret and expect it back
-          echo -n "test-secret-123" | nc -u -w 1 127.0.0.1 19999 > /tmp/response.txt
+          response=$(echo -n "test-secret-123" | nc -u -w 1 127.0.0.1 19999)
           
           # Check if response matches
-          if grep -q "test-secret-123" /tmp/response.txt; then
+          if [ "$response" = "test-secret-123" ]; then
             echo "✓ Service responded correctly to valid secret"
           else
             echo "✗ Service did not respond correctly"
+            echo "Expected: test-secret-123"
+            echo "Got: $response"
             exit 1
           fi
           
-          # Send wrong secret and expect no response (timeout)
-          if timeout 2 bash -c 'echo -n "wrong-secret" | nc -u -w 1 127.0.0.1 19999' > /tmp/response2.txt 2>&1; then
+          # Send wrong secret and expect no response (should timeout)
+          set +e
+          response2=$(timeout 2 bash -c 'echo -n "wrong-secret" | nc -u -w 1 127.0.0.1 19999')
+          exit_code=$?
+          set -e
+          
+          if [ -n "$response2" ]; then
             echo "✗ Service should not respond to wrong secret"
+            echo "Got unexpected response: $response2"
             exit 1
           else
             echo "✓ Service correctly ignored wrong secret"
@@ -123,48 +134,58 @@ jobs:
 
       - name: Test in arm64 container
         run: |
-          # Run integration test in arm64 Debian container
+          cat > test-arm64.sh << 'EOF'
+          #!/bin/bash
+          set -e
+          
+          # Cleanup function
+          cleanup() {
+            if [ -n "$SERVICE_PID" ] && kill -0 $SERVICE_PID 2>/dev/null; then
+              kill $SERVICE_PID
+            fi
+          }
+          trap cleanup EXIT
+          
+          apt-get update -qq
+          apt-get install -y netcat-openbsd ./udpecho_*.deb
+          
+          # Create test secret
+          echo "test-secret-123" > /tmp/test-secret
+          
+          # Start service in background (systemd not available in container)
+          BIND_ADDR=127.0.0.1:19999 SECRET_FILE=/tmp/test-secret /usr/bin/udpecho &
+          SERVICE_PID=$!
+          sleep 2
+          
+          # Test with correct secret
+          response=$(echo -n "test-secret-123" | nc -u -w 1 127.0.0.1 19999 || true)
+          if [ "$response" = "test-secret-123" ]; then
+            echo "✓ ARM64: Service responded correctly to valid secret"
+          else
+            echo "✗ ARM64: Service did not respond correctly"
+            echo "Expected: test-secret-123"
+            echo "Got: $response"
+            exit 1
+          fi
+          
+          # Test with wrong secret (should timeout/no response)
+          response2=$(timeout 2 bash -c 'echo -n "wrong-secret" | nc -u -w 1 127.0.0.1 19999' || true)
+          if [ -n "$response2" ]; then
+            echo "✗ ARM64: Service should not respond to wrong secret"
+            echo "Got unexpected response: $response2"
+            exit 1
+          else
+            echo "✓ ARM64: Service correctly ignored wrong secret"
+          fi
+          
+          echo "✓ All ARM64 integration tests passed"
+          EOF
+          
+          chmod +x test-arm64.sh
+          
+          # Run test in arm64 container
           docker run --rm --platform linux/arm64 \
             -v $(pwd):/workspace \
             -w /workspace \
             debian:bookworm-slim \
-            bash -c '
-              set -e
-              apt-get update
-              apt-get install -y systemd netcat-openbsd ./udpecho_*.deb
-              
-              # Create test secret
-              echo "test-secret-123" > /tmp/test-secret
-              
-              # Configure environment
-              mkdir -p /etc/default
-              echo "BIND_ADDR=127.0.0.1:19999" > /etc/default/udpecho
-              echo "SECRET_FILE=/tmp/test-secret" >> /etc/default/udpecho
-              
-              # Start service in background (systemd not available in container)
-              BIND_ADDR=127.0.0.1:19999 SECRET_FILE=/tmp/test-secret /usr/bin/udpecho &
-              SERVICE_PID=$!
-              sleep 2
-              
-              # Test with correct secret
-              echo -n "test-secret-123" | nc -u -w 1 127.0.0.1 19999 > /tmp/response.txt || true
-              if grep -q "test-secret-123" /tmp/response.txt; then
-                echo "✓ ARM64: Service responded correctly to valid secret"
-              else
-                echo "✗ ARM64: Service did not respond correctly"
-                kill $SERVICE_PID
-                exit 1
-              fi
-              
-              # Test with wrong secret (should timeout/no response)
-              if timeout 2 bash -c "echo -n \"wrong-secret\" | nc -u -w 1 127.0.0.1 19999" > /tmp/response2.txt 2>&1; then
-                echo "✗ ARM64: Service should not respond to wrong secret"
-                kill $SERVICE_PID
-                exit 1
-              else
-                echo "✓ ARM64: Service correctly ignored wrong secret"
-              fi
-              
-              kill $SERVICE_PID
-              echo "✓ All ARM64 integration tests passed"
-            '
+            bash /workspace/test-arm64.sh
