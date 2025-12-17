@@ -75,7 +75,7 @@ jobs:
       - name: Create test secret file
         run: |
           echo "test-secret-123" | sudo tee /tmp/test-secret
-          sudo chmod 644 /tmp/test-secret
+          sudo chmod 640 /tmp/test-secret
           sudo chown udpecho:udpecho /tmp/test-secret || true
 
       - name: Configure service
@@ -87,7 +87,13 @@ jobs:
       - name: Start service
         run: |
           sudo systemctl daemon-reload
-          sudo systemctl restart udpecho || true
+          
+          # Try to restart service and capture any error
+          if ! sudo systemctl restart udpecho 2>&1 | tee /tmp/systemctl.log; then
+            echo "❌ systemctl restart failed with output:"
+            cat /tmp/systemctl.log
+          fi
+          
           sleep 2
           
           # Check service status and show detailed logs on failure
@@ -174,7 +180,7 @@ jobs:
           
           # Create test secret with proper permissions
           echo "test-secret-123" > /tmp/test-secret
-          chmod 644 /tmp/test-secret
+          chmod 640 /tmp/test-secret
           chown udpecho:udpecho /tmp/test-secret
           
           # Configure service
