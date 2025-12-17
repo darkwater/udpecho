@@ -51,7 +51,7 @@ jobs:
 
       - name: Create test secret file
         run: |
-          echo "test-secret-123" | sudo tee /tmp/test-secret
+          echo -n "test-secret-123" | sudo tee /tmp/test-secret
           sudo chmod 640 /tmp/test-secret
           sudo chown udpecho:udpecho /tmp/test-secret
 
@@ -100,11 +100,11 @@ jobs:
 
       - name: Test UDP echo service
         run: |
-          # Install netcat if not available
-          sudo apt-get install -y netcat-openbsd
+          # Install socat for reliable UDP testing
+          sudo apt-get install -y socat
           
           # Send the correct secret and expect it back
-          response=$(echo -n "test-secret-123" | nc -u -w 1 127.0.0.1 19999)
+          response=$(echo -n "test-secret-123" | socat - UDP:127.0.0.1:19999,shut-none)
           
           # Check if response matches
           if [ "$response" = "test-secret-123" ]; then
@@ -118,7 +118,7 @@ jobs:
           
           # Send wrong secret and expect no response (should timeout)
           set +e
-          response2=$(timeout 2 bash -c 'echo -n "wrong-secret" | nc -u -w 1 127.0.0.1 19999')
+          response2=$(timeout 2 bash -c 'echo -n "wrong-secret" | socat - UDP:127.0.0.1:19999,shut-none')
           exit_code=$?
           set -e
           
