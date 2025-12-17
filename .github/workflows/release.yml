@@ -59,6 +59,8 @@ jobs:
   integration-test-amd64:
     runs-on: ubuntu-latest
     needs: linux-build
+    permissions:
+      contents: read
     steps:
       - name: Download Debian package
         uses: actions/download-artifact@v4
@@ -121,6 +123,8 @@ jobs:
   integration-test-arm64:
     runs-on: ubuntu-latest
     needs: linux-build
+    permissions:
+      contents: read
     steps:
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
