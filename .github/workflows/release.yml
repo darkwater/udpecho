@@ -5,78 +5,55 @@ on:
   workflow_dispatch:
 
 jobs:
-  linux-build:
-    runs-on: ubuntu-latest
+  build-and-test:
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
     strategy:
       matrix:
         include:
           - arch: amd64
-            target: x86_64-unknown-linux-gnu
-            deb_arch: amd64
+            runner: ubuntu-latest
           - arch: arm64
-            target: aarch64-unknown-linux-gnu
-            deb_arch: arm64
+            runner: ubuntu-24.04-arm
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-
-      - name: Install cross-compilation tools
-        if: matrix.arch == 'arm64'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
 
       - name: Install cargo-deb
         run: cargo install cargo-deb --locked
 
       - name: Build release binary
-        run: |
-          if [ "${{ matrix.arch }}" = "arm64" ]; then
-            export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
-          fi
-          cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release
 
       - name: Build Debian package
-        run: cargo deb --no-build --target ${{ matrix.target }}
+        run: cargo deb --no-build
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
           name: udpecho-linux-${{ matrix.arch }}
-          path: target/${{ matrix.target }}/release/udpecho
+          path: target/release/udpecho
 
       - name: Upload Debian package
         uses: actions/upload-artifact@v4
         with:
           name: udpecho-debian-package-${{ matrix.arch }}
-          path: target/${{ matrix.target }}/debian/*.deb
-
-  integration-test-amd64:
-    runs-on: ubuntu-latest
-    needs: linux-build
-    permissions:
-      contents: read
-    steps:
-      - name: Download Debian package
-        uses: actions/download-artifact@v4
-        with:
-          name: udpecho-debian-package-amd64
+          path: target/debian/*.deb
 
       - name: Install package
         run: |
           sudo apt-get update
-          sudo apt-get install -y ./udpecho_*.deb
+          sudo apt-get install -y ./target/debian/*.deb
 
       - name: Create test secret file
         run: |
           echo "test-secret-123" | sudo tee /tmp/test-secret
           sudo chmod 640 /tmp/test-secret
-          sudo chown udpecho:udpecho /tmp/test-secret || true
+          sudo chown udpecho:udpecho /tmp/test-secret
 
       - name: Configure service
         run: |
@@ -112,6 +89,9 @@ jobs:
             echo ""
             echo "📁 Secret file check:"
             ls -la /tmp/test-secret || echo "Secret file not found"
+            echo ""
+            echo "📦 Package contents check:"
+            dpkg -L udpecho | grep bin || echo "No binaries in package"
             exit 1
           fi
           
@@ -149,104 +129,5 @@ jobs:
           else
             echo "✓ Service correctly ignored wrong secret"
           fi
-
-  integration-test-arm64:
-    runs-on: ubuntu-latest
-    needs: linux-build
-    permissions:
-      contents: read
-    steps:
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
-
-      - name: Download Debian package
-        uses: actions/download-artifact@v4
-        with:
-          name: udpecho-debian-package-arm64
-
-      - name: Test in arm64 container
-        run: |
-          cat > test-arm64.sh << 'EOF'
-          #!/bin/bash
-          set -e
           
-          # Update package lists
-          apt-get update -qq
-          
-          # Install required packages
-          apt-get install -y netcat-openbsd systemd ./udpecho_*.deb
-          
-          # Create test secret with proper permissions
-          echo "test-secret-123" > /tmp/test-secret
-          chmod 640 /tmp/test-secret
-          chown udpecho:udpecho /tmp/test-secret
-          
-          # Configure service
-          mkdir -p /etc/default
-          echo "BIND_ADDR=127.0.0.1:19999" > /etc/default/udpecho
-          echo "SECRET_FILE=/tmp/test-secret" >> /etc/default/udpecho
-          
-          # Start systemd service (running directly since systemd daemon not available)
-          # We'll run the service as the udpecho user to match production
-          echo "Starting service as udpecho user..."
-          su -s /bin/bash udpecho -c 'BIND_ADDR=127.0.0.1:19999 SECRET_FILE=/tmp/test-secret /usr/bin/udpecho' &
-          SERVICE_PID=$!
-          
-          # Cleanup function
-          cleanup() {
-            if [ -n "$SERVICE_PID" ] && kill -0 $SERVICE_PID 2>/dev/null; then
-              kill $SERVICE_PID
-            fi
-          }
-          trap cleanup EXIT
-          
-          sleep 2
-          
-          # Verify service is running
-          if ! kill -0 $SERVICE_PID 2>/dev/null; then
-            echo "✗ ARM64: Service failed to start"
-            exit 1
-          fi
-          
-          # Test with correct secret
-          response=$(echo -n "test-secret-123" | nc -u -w 1 127.0.0.1 19999 || true)
-          if [ "$response" = "test-secret-123" ]; then
-            echo "✓ ARM64: Service responded correctly to valid secret"
-          else
-            echo "✗ ARM64: Service did not respond correctly"
-            echo "Expected: test-secret-123"
-            echo "Got: $response"
-            
-            # Debug information
-            echo "🔍 Binary check:"
-            ls -la /usr/bin/udpecho || echo "Binary not found"
-            echo "📁 Secret file check:"
-            ls -la /tmp/test-secret || echo "Secret file not found"
-            
-            exit 1
-          fi
-          
-          # Test with wrong secret (should timeout/no response)
-          response2=$(timeout 2 bash -c 'echo -n "wrong-secret" | nc -u -w 1 127.0.0.1 19999' || true)
-          if [ -n "$response2" ]; then
-            echo "✗ ARM64: Service should not respond to wrong secret"
-            echo "Got unexpected response: $response2"
-            exit 1
-          else
-            echo "✓ ARM64: Service correctly ignored wrong secret"
-          fi
-          
-          echo "✓ All ARM64 integration tests passed"
-          EOF
-          
-          chmod +x test-arm64.sh
-          
-          # Run test in arm64 container with privileged mode for systemd
-          docker run --rm --platform linux/arm64 \
-            --privileged \
-            -v $(pwd):/workspace \
-            -w /workspace \
-            debian:bookworm-slim \
-            bash /workspace/test-arm64.sh
+          echo "✓ All tests passed for ${{ matrix.arch }}"
