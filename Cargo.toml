@@ -14,6 +14,7 @@ depends = "systemd"
 maintainer-scripts = "packaging"
 systemd-units = { enable = true, start = true, restart-after-upgrade = true }
 assets = [
+    ["target/release/udpecho", "/usr/bin/udpecho", "755"],
     ["packaging/udpecho.default", "/etc/default/udpecho", "644"],
 ]
 
