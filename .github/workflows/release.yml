@@ -132,3 +132,53 @@ jobs:
           fi
           
           echo "✓ All tests passed for ${{ matrix.arch }}"
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release-assets
+          
+          # Copy and rename binaries
+          cp artifacts/udpecho-linux-amd64/udpecho release-assets/udpecho-linux-amd64
+          cp artifacts/udpecho-linux-arm64/udpecho release-assets/udpecho-linux-arm64
+          
+          # Copy debian packages with proper naming and verification
+          # Find exactly one .deb file per architecture
+          amd64_deb=$(find artifacts/udpecho-debian-package-amd64 -name "*.deb" -type f)
+          arm64_deb=$(find artifacts/udpecho-debian-package-arm64 -name "*.deb" -type f)
+          
+          # Verify we found exactly one file for each
+          if [ $(echo "$amd64_deb" | wc -l) -ne 1 ]; then
+            echo "Error: Expected exactly one amd64 .deb file"
+            exit 1
+          fi
+          if [ $(echo "$arm64_deb" | wc -l) -ne 1 ]; then
+            echo "Error: Expected exactly one arm64 .deb file"
+            exit 1
+          fi
+          
+          # Copy with original names preserved
+          cp "$amd64_deb" release-assets/
+          cp "$arm64_deb" release-assets/
+          
+          # List all files for verification
+          ls -lh release-assets/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: release-assets/*
+          draft: false
+          prerelease: false
+          generate_release_notes: true
