@@ -1,0 +1,16 @@
+[Unit]
+Description=udpecho UDP service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/default/udpecho
+ExecStart=/usr/bin/udpecho
+User=udpecho
+Group=udpecho
+Restart=on-failure
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,4 @@
+# Default environment for udpecho
+# Override these values in /etc/default/udpecho
+BIND_ADDR=0.0.0.0:9999
+SECRET_FILE=/etc/hostname
